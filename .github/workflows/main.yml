@@ -1,41 +1,36 @@
-name: Auto Restart and Keep Codespace Active
+name: Monitor and Restart Codespace
 
 on:
-  schedule:
-    - cron: '* * * * *'  # Runs every minute
-  workflow_dispatch:
+  schedule:
+    - cron: '0 * * * *'  # Runs every hour
 
 jobs:
-  restart_codespace:
-    runs-on: ubuntu-latest
+  monitor-codespace:
+    runs-on: ubuntu-latest
 
-    steps:
-      - name: Install GitHub CLI if not present
-        run: |
-          if ! command -v gh &> /dev/null; then
-            sudo apt-get install gh jq
-          fi
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
 
-      - name: Authenticate GitHub CLI with Personal Access Token
-        run: |
-          echo "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" | gh auth login --with-token
+      - name: Set up GitHub CLI
+        uses: actions/setup-gh@v1
+        with:
+          version: latest
 
-      - name: Check Codespace Status and Keep Alive
-        run: |
-          CODESPACE_NAME="jubilant-yodel-jjj56rpqq56p3qqr7"
-          STATUS=$(gh codespace list --json name,state | jq -r --arg name "$CODESPACE_NAME" '.[] | select(.name == $name) | .state')
+      - name: Authenticate GitHub CLI
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
-          if [ -z "$STATUS" ]; then
-            echo "Error fetching codespace status or codespace does not exist."
-            exit 1
-          fi
+      - name: List Codespaces
+        id: list-codespaces
+        run: gh codespace list --json name,state > codespaces.json
 
-          echo "Codespace status: $STATUS"
-
-          if [ "$STATUS" == "Shutdown" ]; then
-            echo "Codespace is offline. Attempting to start it by SSH..."
-            gh codespace ssh --codespace $CODESPACE_NAME -- echo 'Codespace started!'
-          else
-            echo "Codespace is active. Sending keep-alive signal..."
-            gh codespace ssh --codespace $CODESPACE_NAME -- echo 'Keep-alive signal'
-          fi
+      - name: Check Codespace Status and Restart if Stopped
+        run: |
+          CODESPACE_NAME=$(jq -r '.[0].name' codespaces.json)
+          CODESPACE_STATE=$(jq -r '.[0].state' codespaces.json)
+          if [ "$CODESPACE_STATE" == "Stopped" ]; then
+            echo "Codespace $CODESPACE_NAME is stopped. Restarting..."
+            gh codespace start -c "$CODESPACE_NAME"
+          else
+            echo "Codespace $CODESPACE_NAME is in state $CODESPACE_STATE. No action needed."
+          fi
